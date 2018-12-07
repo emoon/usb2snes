@@ -172,7 +172,8 @@ impl<'a> Usb2snes<'a> {
     fn configure_endpoint(handle: &mut libusb::DeviceHandle, endpoint: &Endpoint) -> libusb::Result<()> {
         let has_kernel_driver = match handle.kernel_driver_active(endpoint.iface) {
             Ok(true) => {
-                handle.detach_kernel_driver(endpoint.iface).ok();
+                println!("Detaching kernel driver");
+                handle.detach_kernel_driver(endpoint.iface)?;
                 true
             },
             _ => false
@@ -180,9 +181,9 @@ impl<'a> Usb2snes<'a> {
 
         println!(" - kernel driver? {}", has_kernel_driver);
 
-        handle.set_active_configuration(endpoint.config)?;
-        handle.claim_interface(endpoint.iface)?;
-        handle.set_alternate_setting(endpoint.iface, endpoint.setting)?;
+        //handle.set_active_configuration(endpoint.config)?;
+        //handle.claim_interface(endpoint.iface)?;
+        //handle.set_alternate_setting(endpoint.iface, endpoint.setting)?;
 
         if has_kernel_driver {
             handle.attach_kernel_driver(endpoint.iface)?;
@@ -242,7 +243,7 @@ impl<'a> Usb2snes<'a> {
         data[3] = b'A';
         data[4] = op_code as u8;
         data[5] = Space::Snes as u8;
-        data[6] = Flags::NoFlag as u8;
+        data[6] = Flags::Noresp as u8;
     }
 
     pub fn get_memory(&self, offset: u32, size: u32) -> Result<Vec<u8>> {
@@ -252,7 +253,13 @@ impl<'a> Usb2snes<'a> {
         Self::fill_header(&mut command, Opcode::Get);
 
         // max 5 milisec waiting as we need real-time performance
-        let timeout = Duration::from_secs(1);
+        let timeout = Duration::from_millis(1000);
+
+        // Memory offset
+        command[256] = ((offset >> 24) & 0xff) as u8;
+        command[257] = ((offset >> 16) & 0xff) as u8;
+        command[258] = ((offset >> 8) & 0xff) as u8;
+        command[259] = ((offset >> 0) & 0xff) as u8;
 
         // size
         command[252] = ((size >> 24) & 0xff) as u8;
@@ -260,11 +267,9 @@ impl<'a> Usb2snes<'a> {
         command[254] = ((size >> 8) & 0xff) as u8;
         command[255] = ((size >> 0) & 0xff) as u8;
 
-        // Memory offset
-        command[256] = ((offset >> 24) & 0xff) as u8;
-        command[257] = ((offset >> 16) & 0xff) as u8;
-        command[258] = ((offset >> 8) & 0xff) as u8;
-        command[259] = ((offset >> 0) & 0xff) as u8;
+        self.clear_read();
+
+        println!("Writing to {:?}", self.endpoint_out);
 
         // TODO: Make sure that we write as much as we expect
         match self.handle.write_bulk(self.endpoint_out.address, &command, timeout) {
@@ -275,14 +280,40 @@ impl<'a> Usb2snes<'a> {
             }
         }
 
-        match self.handle.read_bulk(self.endpoint_in.address, &mut output, timeout) {
-            Ok(len) => println!("len back {}", len),
-            Err(err) => {
-                println!("could not read endpoint: {}", err);
+        let mut fail_counts = 0;
+        let mut size_count = size as i32;
+        let mut result = Vec::with_capacity(size as usize);
+
+        loop
+        {
+            match self.handle.read_bulk(self.endpoint_in.address, &mut output, timeout) {
+                Ok(len) => {
+                    println!("len back {}", len);
+                    size_count -= len as i32;
+
+                    for t in output.iter() {
+                        result.push(*t);
+                    }
+                }
+
+                Err(err) => {
+                    fail_counts += 1;
+                    println!("could not read endpoint: {}", err);
+                    return Err(Error::Other);
+                }
+            }
+
+            if fail_counts == 1000 {
                 return Err(Error::Other);
+            }
+
+            if size_count <= 0 {
+                break;
             }
         }
 
+
+        /*
         // TODO: Make sure that we write as much as we expect
         let mut file_size = 0usize;
         file_size |= output[252] as usize; file_size <<= 8;
@@ -297,8 +328,26 @@ impl<'a> Usb2snes<'a> {
         for i in 0..file_size {
             ret_data.push(output[i]);
         }
+        */
 
-        Ok(ret_data)
+        Ok(result)
+    }
+
+    pub fn clear_read(&self) {
+        let mut len = 0;
+        let mut temp: [u8; 64] = [0; 64];
+        let timeout = Duration::from_millis(50);
+
+        loop {
+            let len = match self.handle.read_bulk(self.endpoint_in.address, &mut temp, timeout) {
+                Ok(len) => { println!("clear read: {}", len); len }
+                Err(err) => { println!("nothing to read {}", err); 0 },
+            };
+
+            if len == 0 {
+                break;
+            }
+        }
     }
 }
 
