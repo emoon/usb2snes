@@ -1,4 +1,4 @@
-use libusb;
+pub use libusb;
 
 use std::time::Duration;
 use libusb::{Context, Direction, Error, Device, TransferType, DeviceDescriptor, Result};
@@ -15,9 +15,7 @@ struct Endpoint {
 }
 
 pub struct Usb2snes<'a> {
-    context: libusb::Context,
-    device: Option<libusb::Device<'a>>,
-    handle: Option<libusb::DeviceHandle<'a>>,
+    handle: libusb::DeviceHandle<'a>,
     endpoint_in: Endpoint,
     endpoint_out: Endpoint,
 }
@@ -79,25 +77,12 @@ impl<'a> Usb2snes<'a> {
     /// Creates a Usb2snes instance. This function will assume the default Vendor Id (0x1209) and
     /// Product Id (0x5a22) for the SD2SNES USB connection.
     ///
-    pub fn new() -> Result<Usb2snes<'a>> {
-        let mut instance = Usb2snes {
-            context: libusb::Context::new()?,
-            device: None,
-            handle: None,
-            endpoint_in: Endpoint::default(),
-            endpoint_out: Endpoint::default(),
-        };
-
-        match Self::new_from_vid_pid(&mut instance, VENDOR_ID, PRODUCT_ID) {
-            Err(e) => return Err(e),
-            Ok(_) => (),
-        }
-
-        Ok(instance)
+    pub fn new(context: &'a Context) -> Result<Usb2snes<'a>> {
+        Self::new_from_vid_pid(context, VENDOR_ID, PRODUCT_ID)
     }
 
-    pub fn new_from_vid_pid(instance: &'a mut Usb2snes, vendor_id: u16, product_id: u16) -> Result<()> {
-        let (mut device, desc, mut handle) = Self::open_device(&instance.context, vendor_id, product_id)?;
+    pub fn new_from_vid_pid(context: &'a Context, vendor_id: u16, product_id: u16) -> Result<Usb2snes<'a>> {
+        let (mut device, desc, mut handle) = Self::open_device(context, vendor_id, product_id)?;
 
         // Try bulk based
         let endpoints = Self::get_end_points(&mut device, &desc, TransferType::Bulk);
@@ -118,9 +103,11 @@ impl<'a> Usb2snes<'a> {
             println!("Found connection to snes! (bulk)");
 
             if let Some(ends) = endpoints {
-                instance.endpoint_in = ends.0;
-                instance.endpoint_out = ends.1;
-                return Ok(());
+                return Ok(Usb2snes {
+                    handle: handle,
+                    endpoint_in: ends.0,
+                    endpoint_out: ends.1,
+                });
             }
         }
 
@@ -255,11 +242,8 @@ impl<'a> Usb2snes<'a> {
         self.clear_read();
 
         //println!("Writing to {:?}", self.endpoint_out);
-
-        let handle = self.handle.as_ref().unwrap();
-
         // TODO: Make sure that we write as much as we expect
-        match handle.write_bulk(self.endpoint_out.address, &command, timeout) {
+        match self.handle.write_bulk(self.endpoint_out.address, &command, timeout) {
             Ok(_) => (),
             Err(err) => {
                 println!("could not write to endpoint: {}", err);
@@ -273,7 +257,7 @@ impl<'a> Usb2snes<'a> {
 
         loop
         {
-            match handle.read_bulk(self.endpoint_in.address, &mut output, timeout) {
+            match self.handle.read_bulk(self.endpoint_in.address, &mut output, timeout) {
                 Ok(len) => {
                     //println!("len back {}", len);
                     size_count -= len as i32;
@@ -304,10 +288,9 @@ impl<'a> Usb2snes<'a> {
     pub fn clear_read(&self) {
         let mut temp: [u8; 64] = [0; 64];
         let timeout = Duration::from_millis(50);
-        let handle = self.handle.as_ref().unwrap();
 
         loop {
-            let len = match handle.read_bulk(self.endpoint_in.address, &mut temp, timeout) {
+            let len = match self.handle.read_bulk(self.endpoint_in.address, &mut temp, timeout) {
                 Ok(len) => { println!("clear read: {}", len); len }
                 Err(err) => { println!("nothing to read {}", err); 0 },
             };
