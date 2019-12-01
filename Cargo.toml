@@ -5,4 +5,4 @@ authors = ["Daniel Collin <daniel@collin.com>"]
 edition = "2018"
 
 [dependencies]
-libusb = { git = "https://github.com/a1ien/libusb-rs", rev="3b9f03a8" }
+rusb = "0.5"
