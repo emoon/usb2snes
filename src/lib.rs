@@ -237,7 +237,7 @@ impl<T: UsbContext> Usb2snes<T> {
         Self::fill_header(&mut command, Opcode::Get);
 
         // max 5 milisec waiting as we need real-time performance
-        let timeout = Duration::from_millis(50);
+        let timeout = Duration::from_millis(5000);
 
         // Memory offset
         command[256] = ((offset >> 24) & 0xff) as u8;

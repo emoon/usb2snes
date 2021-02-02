@@ -1,10 +1,9 @@
 use usb2snes::Usb2snes;
-use libusb;
 
 fn main() {
-    //let mut context = libusb::Context::new().unwrap();
+    let context = rusb::Context::new().unwrap();
     //context.set_log_level(libusb::LogLevel::Debug);
-    let mut usb2snes = Usb2snes::new().unwrap();
+    let usb2snes = Usb2snes::new(&context).unwrap();
     //usb2snes.send_command();
 
     loop
